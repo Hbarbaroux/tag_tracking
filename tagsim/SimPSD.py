@@ -57,7 +57,7 @@ class InstantRF:
         rads = flip * np.pi / 180.0
         rotvec = rads * self.dirvec
 
-        self.rot = R.from_rotvec(rotvec).as_dcm()
+        self.rot = R.from_rotvec(rotvec).as_matrix()
         
         if HAS_CUPY and self.use_gpu:
             self.rot = cp.asarray(self.rot, dtype=cp.float32)
