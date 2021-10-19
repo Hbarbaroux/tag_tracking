@@ -1,15 +1,19 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import cv2
+import random
+
 
 from scipy.interpolate import splev, splrep
 from scipy.signal import triang, windows
 from scipy import ndimage, interpolate
 
 from skimage.filters import gaussian
-from skimage.transform import rescale
+from skimage.transform import rescale, resize
 from skimage.morphology import binary_dilation, disk
 
-from .base_im_generation import gen_motion_params, get_temporal_waveform, get_temporal_waveform2, make_random_mask, get_random_image, map_1Dpoly
+from .base_im_generation import gen_motion_params, get_temporal_waveform, get_temporal_waveform2
+from .base_im_generation import get_random_image, map_1Dpoly, make_random_mask
 from .sim_fullmotion import get_dens, proc_im
 from .SimObject import SimObject
 from .SimPSD import SimInstant
@@ -17,9 +21,10 @@ from .interp2d import interpolate2Dpoints_fc
 from .interp_temp2d import interpolate_temp1D
 
 
-def get_random_heart(NN = 768,
-                    Nt = 25,
-                    N_im = 256,
+def gen_sample_heart(NN = 768,
+                    Nt = 30,
+                    t_res = 30,
+                    N_im = 90,
                     basepath="./image_db/",
                     rseed=None,
                     seed = -1,
@@ -28,7 +33,201 @@ def get_random_heart(NN = 768,
                     t2_lims=(40, 70),
                     SNR_range = (10, 30),
                     use_gpu = True,
-                    ke = 0.12,
+                    ke = 0.1,
+                    kd = 0.08,
+                    te = 1.0,
+                    max_flip = 15,
+                    do_density=True,
+                    outer_mask_file=None):
+
+    final_mask = make_random_mask(NN=NN, rseed=rseed)
+    img = get_random_image(basepath, NN=NN, seed=seed)
+
+    res_heart = gen_heart(NN = NN, Nt=Nt, N_im=N_im)
+    r_heart = res_heart['r']
+
+    r0_NN = np.rint((r_heart[0]+0.5) * NN).astype(np.int)
+    mask_myo = np.zeros((NN,NN))
+    mask_myo[r0_NN[:,0], r0_NN[:,1]] = 1.0
+
+    mask_blood0 = ndimage.binary_fill_holes(mask_myo)
+
+    img_mask = img > img_thresh
+    final_mask = final_mask & img_mask & ~mask_blood0
+
+    s = img
+    s = s[final_mask]
+
+    t = res_heart['t']
+    r_a = res_heart['r_a'][final_mask]
+    r_b = res_heart['r_b'][final_mask]
+    theta = res_heart['theta'][final_mask]
+    xmod = res_heart['xmod'][:, final_mask]
+    ymod = res_heart['ymod'][:, final_mask]
+
+    ell_x = r_a[None, :] * (np.cos(t) - 1.0)[:,None] 
+    ell_y = r_b[None, :] * np.sin(t)[:,None] 
+
+    dx = np.cos(theta)[None,:] * ell_x  - np.sin(theta)[None,:] * ell_y + xmod
+    dy = np.sin(theta)[None,:] * ell_x  + np.cos(theta)[None,:] * ell_y + ymod
+
+    mesh_range = np.arange(NN)/NN - 0.5
+    xx, yy = np.meshgrid(mesh_range, mesh_range, indexing = 'ij')
+
+    x = xx[final_mask]
+    y = yy[final_mask]
+
+    x = x[None, :] + dx
+    y = y[None, :] + dy
+
+    z = np.zeros_like(x)
+
+    r = np.stack([x, y, z], 2)
+
+    t1 = map_1Dpoly(s, t1_lims)
+    t2 = map_1Dpoly(s, t2_lims)
+
+    s_heart = np.ones(r_heart.shape[1]) * np.random.uniform(0.5, 0.7)
+    t1_heart = np.ones(r_heart.shape[1]) * np.random.uniform(t1_lims[0], t1_lims[1])
+    t2_heart = np.ones(r_heart.shape[1]) * np.random.uniform(t2_lims[0], t2_lims[1])
+
+    NNa = NN//2
+    N_lv = len(res_heart['r0_lv'])
+
+    all_static_mask = np.ones([Nt, NN, NN])
+    all_mask_lv = np.zeros([Nt, N_im, N_im])
+    for it in range(Nt):
+
+        r_NN = np.rint((r_heart[it]+0.5) * NNa).astype(np.int)
+        mask_myo = np.zeros((NNa,NNa))
+        mask_myo[r_NN[:,0], r_NN[:,1]] = 1.0
+
+        mask_blood = ndimage.binary_fill_holes(mask_myo)
+        mask_blood = rescale(mask_blood, 2, order=0)   
+        mask_myo = rescale(mask_myo, 2, order=0)
+
+        mask_lv = np.zeros((NNa,NNa))
+        mask_lv[r_NN[:N_lv,1], r_NN[:N_lv,0]] = 1.0
+        mask_lv = rescale(mask_lv, 2, order=0)
+
+        mask_cavity = mask_blood - mask_myo
+        mask_cavity = ndimage.morphology.binary_dilation(mask_cavity)
+        
+        all_static_mask[it] -= mask_cavity
+        all_mask_lv[it] = (cv2.resize(mask_lv, (N_im, N_im), interpolation=cv2.INTER_NEAREST) > 0.5).astype(int)
+    
+    mask_blood0d = ndimage.morphology.binary_dilation(mask_blood0, disk(5), iterations = 3)
+
+    all_point_mask = []
+    for it in range(Nt):
+        m_temp = all_static_mask[it][mask_blood0d > 0.5]
+        m_temp = ~(m_temp > 0.5)
+        all_point_mask.append(m_temp)
+
+    x_blood = xx[mask_blood0d > 0.5]
+    y_blood = yy[mask_blood0d > 0.5]
+    z_blood = np.zeros_like(x_blood)
+
+    r0_blood = np.stack([x_blood, y_blood, z_blood], 1)
+    r_blood = np.tile(r0_blood, [Nt,1,1])
+
+    s_blood = np.ones(r_blood.shape[1]) * np.random.uniform(0.20, 0.40)
+    t1_blood = np.ones(r_blood.shape[1]) * np.random.uniform(30, 60)
+    t2_blood = np.ones(r_blood.shape[1]) * np.random.uniform(10, 20)
+
+    r_all = np.concatenate([r_blood, r, r_heart], 1)
+    s_all = np.concatenate([s_blood, s, s_heart])
+    t1_all = np.concatenate([t1_blood, t1, t1_heart])
+    t2_all = np.concatenate([t2_blood, t2, t2_heart])
+
+    #acq_loc = np.arange(0, Nt) * 1000 / Nt + 10.0
+    acq_loc = np.arange(0, Nt) * t_res + 10.0
+
+    sim_object = SimObject()
+    sim_object.gen_from_generator(r_all, s_all, t1_all, t2_all)
+
+    simulator = SimInstant(sim_object, use_gpu=use_gpu)
+    simulator.sample_DENSE_PSD(ke=ke, kd=kd, max_flip=max_flip, acq_loc=acq_loc, te=te)
+
+    acqs0 = simulator.run()
+
+    # For DENSE specifically run the phase cycling acquisition
+    extra_theta = np.linspace(0, 2*np.pi, 4)[1:-1]
+    extra_acq = []
+    for theta_i in extra_theta:
+        simulator = SimInstant(sim_object, use_gpu=use_gpu)
+        simulator.sample_DENSE_PSD(rf_dir = [np.cos(theta_i), np.sin(theta_i), 0], ke=ke, kd = 0.0, acq_loc=acq_loc, te=te)
+        extra_acq.append(simulator.run())
+
+    for it in range(Nt):
+    
+        point_mask = np.ones(s_all.size)
+        point_mask[:all_point_mask[it].size] = all_point_mask[it]
+        
+        acqs0[it][0] = acqs0[it][0][point_mask > 0.5, :]
+        acqs0[it][1] = acqs0[it][1][point_mask > 0.5, :]
+
+        for acq in extra_acq:
+            acq[it][0] = acq[it][0][point_mask > 0.5, :]
+            acq[it][1] = acq[it][1][point_mask > 0.5, :]
+
+    ##### Now we generate the images
+    all_im_pc = np.zeros((Nt, N_im, N_im), np.complex64)
+
+    dens_mod = 1.0
+    if do_density:
+        dd = get_dens(acqs0[0][0], use_gpu = use_gpu)
+        dens_mod = np.median(dd)
+
+    noise_scale = 0.3*256*256/N_im/np.random.uniform(SNR_range[0], SNR_range[1])
+
+    kaiser_range = [2,6]
+    kaiser_beta = np.random.rand() * (kaiser_range[1] - kaiser_range[0]) + kaiser_range[0]
+
+    for ii in range(Nt):
+        # Generate the images without any noise or artifacts
+        if do_density:
+            dd = get_dens(acqs0[ii][0], use_gpu = use_gpu)
+            dd = dens_mod / (dd + dens_mod * .1)
+        else:
+            dd = np.ones(acqs0[0][0].shape[0], np.float32)
+
+        im0 = sim_object.grid_im_from_M(acqs0[ii][0], acqs0[ii][1], N_im = N_im, use_gpu = use_gpu, dens = dd)
+        im0 = proc_im(im0, N_im, noise_scale, kaiser_beta)
+
+        extra_im = []
+        for acq in extra_acq:
+            im_temp = sim_object.grid_im_from_M(acq[ii][0], acq[ii][1], N_im = N_im, use_gpu = use_gpu, dens = dd)
+            im_temp = proc_im(im_temp, N_im, noise_scale, kaiser_beta)
+            extra_im.append(im_temp)
+
+        # Generates a phase cycled image for DENSE
+        im_pc = im0.copy()
+        for i in range(len(extra_im)):
+            im_pc += np.conj(np.exp(1j * extra_theta[i])) * extra_im[i]
+        all_im_pc[ii] = im_pc
+
+    return {
+        "imgs": all_im_pc * resize(np.load(outer_mask_file), (N_im, N_im), 0),
+        "masks": all_mask_lv,
+    }
+
+
+def get_random_heart(NN = 768,
+                    Nt = 30,
+                    t_res = 30,
+                    N_im = 90,
+                    basepath="./image_db/",
+                    rseed=None,
+                    seed = -1,
+                    img_thresh=0.20,
+                    t1_lims=(900, 1200),
+                    t2_lims=(40, 70),
+                    SNR_range = (10, 30),
+                    use_gpu = True,
+                    ke = 0.1,
+                    kd = 0.08,
+                    max_flip = 15,
                     mode = 'gridtag',
                     do_density=True,
                     new_sim = True,
@@ -37,7 +236,7 @@ def get_random_heart(NN = 768,
     final_mask = make_random_mask(NN=NN, rseed=rseed)
     img = get_random_image(basepath, NN=NN, seed=seed)
 
-    res_heart = gen_heart(NN = NN, N_im=N_im)
+    res_heart = gen_heart(NN = NN, Nt=Nt, N_im=N_im)
     r_heart = res_heart['r']
 
     r0_NN = np.rint((r_heart[0]+0.5) * NN).astype(np.int)
@@ -92,8 +291,10 @@ def get_random_heart(NN = 768,
     t2_heart = np.ones(r_heart.shape[1]) * np.random.uniform(t2_lims[0], t2_lims[1])
 
     NNa = NN//2
+    N_lv = len(res_heart['r0_lv'])
 
     all_static_mask = np.ones([Nt, NN, NN])
+    all_mask_lv = np.zeros([Nt, N_im, N_im])
     for it in range(Nt):
 
         r_NN = np.rint((r_heart[it]+0.5) * NNa).astype(np.int)
@@ -104,14 +305,17 @@ def get_random_heart(NN = 768,
         mask_blood = rescale(mask_blood, 2, 1)   
         mask_myo = rescale(mask_myo, 2, 1)
 
+        mask_lv = np.zeros((NNa,NNa))
+        mask_lv[r_NN[:N_lv,0], r_NN[:N_lv,1]] = 1.0
+        mask_lv = rescale(mask_lv, 2, 1)
+
         mask_cavity = mask_blood - mask_myo
         mask_cavity = ndimage.morphology.binary_dilation(mask_cavity)
         
         all_static_mask[it] -= mask_cavity
-
+        all_mask_lv[it] = mask_lv
+    
     mask_blood0d = ndimage.morphology.binary_dilation(mask_blood0, disk(5), iterations = 3)
-
-
 
     all_point_mask = []
     for it in range(Nt):
@@ -137,7 +341,8 @@ def get_random_heart(NN = 768,
     t1_all = np.concatenate([t1_blood, t1, t1_heart])
     t2_all = np.concatenate([t2_blood, t2, t2_heart])
 
-    acq_loc = np.arange(0, Nt) * 1000 / Nt + 10.0
+    #acq_loc = np.arange(0, Nt) * 1000 / Nt + 10.0
+    acq_loc = np.arange(0, Nt) * t_res + 10.0
 
     sim_object = SimObject()
     sim_object.gen_from_generator(r_all, s_all, t1_all, t2_all)
@@ -150,7 +355,7 @@ def get_random_heart(NN = 768,
         else:
             simulator.sample_tagging1331_v2_PSD(ke=ke, acq_loc=acq_loc)
     elif (mode == 'DENSE'):
-        simulator.sample_DENSE_PSD(ke=ke, kd = 0.0, acq_loc=acq_loc)
+        simulator.sample_DENSE_PSD(ke=ke, kd=kd, max_flip=max_flip, acq_loc=acq_loc)
 
     acqs0 = simulator.run()
 
@@ -677,4 +882,5 @@ def gen_heart(Np = 10, N_up=100, LV_smooth = .02, NN = 512, Nt = 25, N_im = 256,
             'xmod': xmod_out,
             'ymod': ymod_out,
             'full_mask': full_mask,
-            'r0_lv': r0_lv}
+            'r0_lv': r0_lv,
+            'r0_rv': r0_rv}
