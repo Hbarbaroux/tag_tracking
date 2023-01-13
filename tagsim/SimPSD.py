@@ -377,7 +377,7 @@ class SimInstant:
         self.init_tag = True
 
     
-    def sample_DENSE_PSD(self, rf_dir=(1.0, 0.0, 0.0), ke=0.1, ke_dir=(1.0, 0.0, 0.0), te=1.0, kd=0.08, max_flip=15, acq_loc=[100], profile=None):
+    def sample_DENSE_PSD(self, rf_dir=(1.0, 0.0, 0.0), ke=0.1, ke_dir=(1.0, 0.0, 0.0), te=1.0, kd=0.08, flip=[15], acq_loc=[100], profile=None):
         M0_ke = 1e3 * 2 * ke * np.pi / 267.522  # [mT * ms / m]
         M0_kd = 1e3 * 2 * kd * np.pi / 267.522  # [mT * ms / m]
 
@@ -387,8 +387,11 @@ class SimInstant:
         self.psd.append((InstantRF(dirvec=rf_dir, flip=90, use_gpu = self.use_gpu), .03))
         self.psd.append((InstantSpoil(use_gpu = self.use_gpu), .04))
 
-        for t_acq in acq_loc:
-            self.psd.append((InstantRF(flip=max_flip, use_gpu = self.use_gpu, profile=profile), t_acq))
+        if len(flip) == 1:
+            flip = flip * len(acq_loc)
+
+        for i, t_acq in enumerate(acq_loc):
+            self.psd.append((InstantRF(flip=flip[i], use_gpu = self.use_gpu, profile=profile), t_acq))
             self.psd.append((InstantGrad(dirvec=ke_dir, M0=M0_ke, use_gpu = self.use_gpu), t_acq + .01))
             self.psd.append((InstantGrad(dirvec=[0, 0, 1], M0=M0_kd, use_gpu = self.use_gpu), t_acq + .02))
             self.psd.append((InstantAcq(use_gpu = self.use_gpu), t_acq + te))
