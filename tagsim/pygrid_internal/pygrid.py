@@ -199,12 +199,18 @@ class Gridder:
         # t4 = time()
 
         if imspace:
-            im_g = cp.fft.ifftshift(cp.fft.fftn(cp.fft.fftshift(im_g)))
+            im_g_ = cp.fft.ifftshift(cp.fft.fftn(cp.fft.fftshift(im_g)))
         
         if transfer_cpu:
-            out = im_g.get()
+            if imspace:
+                out = [im_g_.get(), im_g.get()]
+            else:
+                out = im_g.get()
         else:
-            out = im_g
+            if imspace:
+                out = [im_g_, im_g]
+            else:
+                out = im_g
         # t5 = time()
 
         # return out, (t0, t1, t2, t3, t4, t5)
@@ -249,7 +255,8 @@ class Gridder:
         im = crop(im, self.grid_params["imsize"])
 
         if imspace:
-            im = np.fft.ifftshift(np.fft.fftn(np.fft.fftshift(im)))
+            im_ = np.fft.ifftshift(np.fft.fftn(np.fft.fftshift(im)))
+            return im_, im
 
         return im
 

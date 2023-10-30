@@ -265,9 +265,9 @@ def get_dens(pos, N_im=256, oversamp=2.0, krad=1.5, nthreads = 0, use_gpu = Fals
 
     out = None
     if use_gpu:
-        out = gridder.cu_k2im(MM.astype(np.complex64), traj, dens, imspace=True)
+        out, kdata = gridder.cu_k2im(MM.astype(np.complex64), traj, dens, imspace=True)
     else:
-        out = gridder.k2im(MM.astype(np.complex64), traj, dens, imspace=True)
+        out, kdata = gridder.k2im(MM.astype(np.complex64), traj, dens, imspace=True)
 
     dd = None
     if use_gpu:
