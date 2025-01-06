@@ -253,9 +253,11 @@ class Gridder:
         self.kernel.apply_deapp(im)
 
         im = crop(im, self.grid_params["imsize"])
+        # print("imsize", im.shape, self.grid_params["imsize"])
 
         if imspace:
             im_ = np.fft.ifftshift(np.fft.fftn(np.fft.fftshift(im)))
+            # print("imasize2", im_.shape, im.shape)
             return im_, im
 
         return im

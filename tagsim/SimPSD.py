@@ -27,20 +27,37 @@ class PosTime:
             self.pos = np.zeros_like(self.r[0])
     
     def calc_pos(self, p_time):
-        p_time = p_time % self.period
+        if self.period is not None:
+            p_time = p_time % self.period
+        ## Only works for regular intervals
+        # for i in range(self.tt.size):
+        #     if self.tt[i] > p_time:
+        #         lo = i - 1
+        #         hi = i
+
+        #         lo_mod = 1 - (p_time - self.tt[lo]) / self.dt
+        #         hi_mod = (p_time - self.tt[lo]) / self.dt
+        #         break
+        #     elif i == (self.tt.size - 1):
+        #         lo = i
+        #         hi = 0
+        #         lo_mod = 1 - (p_time - self.tt[lo]) / self.dt
+        #         hi_mod = (p_time - self.tt[lo]) / self.dt
+
+        ## Works for any kind of sampling
         for i in range(self.tt.size):
-            if self.tt[i] > p_time:
+            if self.tt[i] >= p_time:
                 lo = i - 1
                 hi = i
 
-                lo_mod = 1 - (p_time - self.tt[lo]) / self.dt
-                hi_mod = (p_time - self.tt[lo]) / self.dt
+                lo_mod = (self.tt[hi] - p_time) / (self.tt[hi] - self.tt[lo])
+                hi_mod = (p_time - self.tt[lo]) / (self.tt[hi] - self.tt[lo])
                 break
             elif i == (self.tt.size - 1):
                 lo = i
                 hi = 0
-                lo_mod = 1 - (p_time - self.tt[lo]) / self.dt
-                hi_mod = (p_time - self.tt[lo]) / self.dt
+                lo_mod = (self.tt[hi] + self.period - p_time) / (self.tt[hi] + self.period - self.tt[lo])
+                hi_mod = (p_time - self.tt[lo]) / (self.tt[hi] + self.period - self.tt[lo])
 
         self.pos[:] = self.r[lo] * lo_mod + self.r[hi] * hi_mod
 
@@ -254,7 +271,8 @@ class SimInstant:
         M0_kd = 1e3 * 2 * kd * np.pi / 267.522  # [mT * ms / m]
 
         self.psd.append((InstantRF(flip=90, use_gpu = self.use_gpu), 0))
-        self.psd.append((InstantGrad(dirvec=ke_dir, M0=M0_ke, use_gpu = self.use_gpu), .01))
+        if ke_dir is not None:
+            self.psd.append((InstantGrad(dirvec=ke_dir, M0=M0_ke, use_gpu = self.use_gpu), .01))
         self.psd.append((InstantGrad(dirvec=[0, 0, 1], M0=M0_kd, use_gpu = self.use_gpu), .02))
         self.psd.append((InstantRF(dirvec=rf_dir, flip=90, use_gpu = self.use_gpu), .03))
         self.psd.append((InstantSpoil(use_gpu = self.use_gpu), .04))
@@ -264,7 +282,8 @@ class SimInstant:
 
         for i, t_acq in enumerate(acq_loc):
             self.psd.append((InstantRF(flip=flip[i], use_gpu = self.use_gpu, profile=profile), t_acq))
-            self.psd.append((InstantGrad(dirvec=ke_dir, M0=M0_ke, use_gpu = self.use_gpu), t_acq + .01))
+            if ke_dir is not None:
+                self.psd.append((InstantGrad(dirvec=ke_dir, M0=M0_ke, use_gpu = self.use_gpu), t_acq + .01))
             self.psd.append((InstantGrad(dirvec=[0, 0, 1], M0=M0_kd, use_gpu = self.use_gpu), t_acq + .02))
             self.psd.append((InstantAcq(use_gpu = self.use_gpu), t_acq + te))
             self.psd.append((InstantSpoil(use_gpu = self.use_gpu), t_acq + te + 0.01))

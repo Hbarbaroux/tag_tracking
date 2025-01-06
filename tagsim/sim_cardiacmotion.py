@@ -24,7 +24,7 @@ from .interp_temp2d import interpolate_temp1D
 def get_random_heart(NN = 768,
                     Nt = 30,
                     t_res = 30,
-                    N_im = 90,
+                    N_im = 128,
                     basepath="./image_db/",
                     rseed=None,
                     seed = -1,
@@ -121,7 +121,7 @@ def get_random_heart(NN = 768,
         mask_cavity = ndimage.morphology.binary_dilation(mask_cavity)
         
         all_static_mask[it] -= mask_cavity
-        all_mask_lv[it] = mask_lv
+        # all_mask_lv[it] = mask_lv
     
     mask_blood0d = ndimage.morphology.binary_dilation(mask_blood0, disk(5), iterations = 3)
 
@@ -163,7 +163,7 @@ def get_random_heart(NN = 768,
         else:
             simulator.sample_tagging1331_v2_PSD(ke=ke, acq_loc=acq_loc)
     elif (mode == 'DENSE'):
-        simulator.sample_DENSE_PSD(ke=ke, kd=kd, max_flip=max_flip, acq_loc=acq_loc)
+        simulator.sample_DENSE_PSD(ke=ke, kd=kd, flip=[max_flip], acq_loc=acq_loc)
 
     acqs0 = simulator.run()
 
@@ -173,7 +173,7 @@ def get_random_heart(NN = 768,
         extra_acq = []
         for theta_i in extra_theta:
             simulator = SimInstant(sim_object, use_gpu=use_gpu)
-            simulator.sample_DENSE_PSD(rf_dir = [np.cos(theta_i), np.sin(theta_i), 0], ke=ke, kd = 0.0, acq_loc=acq_loc)
+            simulator.sample_DENSE_PSD(rf_dir = [np.cos(theta_i), np.sin(theta_i), 0], ke=ke, kd = 0.0, flip=[max_flip], acq_loc=acq_loc)
             extra_acq.append(simulator.run())
 
     for it in range(Nt):
@@ -327,13 +327,13 @@ def get_random_heart(NN = 768,
             dd = np.ones(acqs0[0][0].shape[0], np.float32)
 
         im0 = sim_object.grid_im_from_M(acqs0[ii][0], acqs0[ii][1], N_im = N_im, use_gpu = use_gpu, dens = dd)
-        im0 = proc_im(im0, N_im, noise_scale, kaiser_beta)
+        im0, _ = proc_im(im0, N_im, noise_scale, kaiser_beta)
 
         if (mode == 'DENSE'):
             extra_im = []
             for acq in extra_acq:
                 im_temp = sim_object.grid_im_from_M(acq[ii][0], acq[ii][1], N_im = N_im, use_gpu = use_gpu, dens = dd)
-                im_temp = proc_im(im_temp, N_im, noise_scale, kaiser_beta)
+                im_temp, _ = proc_im(im_temp, N_im, noise_scale, kaiser_beta)
                 extra_im.append(im_temp)
 
         # Generates a phase cycled image for DENSE
@@ -654,7 +654,7 @@ def gen_heart(Np = 10, N_up=100, LV_smooth = .02, NN = 512, Nt = 25, N_im = 256,
     theta_c_out.real = blur_outer(theta_c_NN.real, mask_NN)
     theta_c_out.imag = blur_outer(theta_c_NN.imag, mask_NN)
 
-    scaler = NN/512
+    scaler = 2*NN/512
     r_a_out *= scaler
     r_b_out *= scaler
     theta_c_out *= scaler

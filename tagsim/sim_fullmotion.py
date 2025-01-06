@@ -228,7 +228,7 @@ def proc_im(im, N_im = 256, noise_scale = 50, kaiser_beta = 4, do_hamming = Fals
     
 
     k0 = np.fft.ifftshift(np.fft.fft2(np.fft.fftshift(im)))
-    if noise_scale > 0:
+    if noise_scale is not None and noise_scale > 0:
         k0 += noise_scale * (np.random.standard_normal(k0.shape) + 1j * np.random.standard_normal(k0.shape))
     
     # if np.random.rand() < blur_chance:

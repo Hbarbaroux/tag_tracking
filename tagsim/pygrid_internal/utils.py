@@ -12,7 +12,7 @@ def roundup2(x):
 
 
 def roundup4(x):
-    return int(np.ceil(x / 2.0)) * 2
+    return int(np.ceil(x / 4.0)) * 4
 
 
 def zeropad(A, out_shape, use_gpu=False):
